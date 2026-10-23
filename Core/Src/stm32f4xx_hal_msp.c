@@ -40,7 +40,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-
+extern DMA_HandleTypeDef hdma2;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -111,6 +111,38 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+
+    // DMA Stuff
+	hdma2.Instance = DMA2_Stream0;
+
+	hdma2.Init.Channel = DMA_CHANNEL_0;
+	hdma2.Init.Direction = DMA_PERIPH_TO_MEMORY;
+	hdma2.Init.PeriphInc = DMA_PINC_DISABLE;
+	hdma2.Init.MemInc = DMA_MINC_ENABLE;
+	hdma2.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD; // ADC values are 12 bits
+	hdma2.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+	hdma2.Init.Mode = DMA_CIRCULAR;
+	hdma2.Init.Priority = DMA_PRIORITY_MEDIUM;
+	hdma2.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+//	hdma2->Init.FIFOThreshold
+//	hdma2->Init.MemBurst
+//	hdma2->Init.PeriphBurst
+
+	__HAL_RCC_DMA2_CLK_ENABLE();
+
+	if(HAL_DMA_Init(&hdma2) != HAL_OK)
+	{
+		 Error_Handler();
+	}
+
+	// Link DMA2 Stream0 to ADC 1
+	__HAL_LINKDMA(hadc,DMA_Handle,hdma2);
+
+
+	// Enable DMA interrupts
+	__NVIC_SetPriority(DMA2_Stream0_IRQn,5);
+	__NVIC_EnableIRQ(DMA2_Stream0_IRQn);
     /* USER CODE END ADC1_MspInit 1 */
 
   }

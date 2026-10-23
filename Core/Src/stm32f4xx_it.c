@@ -61,12 +61,7 @@ extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
-extern Ring_Buffer_t tx_buffer;
-extern Ring_Buffer_t rx_buffer;
-
-extern volatile uint32_t adc_values[2];
-extern volatile uint32_t adc_channel;
-
+extern DMA_HandleTypeDef hdma2;
 extern ADC_HandleTypeDef hadc1;
 /* USER CODE END EV */
 
@@ -209,5 +204,9 @@ void USART2_IRQHandler(void) {
 void ADC_IRQHandler(void) {
 	HAL_ADC_IRQHandler(&hadc1);
 
+}
+
+void DMA2_Stream0_IRQHandler(void) {
+	HAL_DMA_IRQHandler(&hdma2);
 }
 /* USER CODE END 1 */

@@ -44,7 +44,12 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+DMA_HandleTypeDef hdma2;
 
+#define NUM_CH   2
+#define N_FRAMES 2
+static volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
+// layout: [A0, B0, A1, B1]  -> frame 0 = {A0,B0}, frame 1 = {A1,B1}
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -87,8 +92,15 @@ uint8_t storage[BUFFER_SIZE];
 uint8_t tx_storage[BUFFER_SIZE];
 uint8_t rx_storage[BUFFER_SIZE];
 
-volatile uint32_t adc_values[2];
-volatile uint8_t adc_channel = 0;
+typedef struct {
+	int integer_part;
+	int fractional_part;
+} Voltages_t;
+
+uint8_t adc_group_sequence[NUM_CH] = {1,4};
+volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
+volatile bool adc_conver_ready_buf1 = false;
+volatile bool adc_conver_ready_buf2 = false;
 
 
 /* USER CODE END PV */
@@ -106,6 +118,7 @@ void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
+int _write(int file, char *ptr, int len);
 
 void start_DWT_cycle_counter(void) {
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -140,11 +153,63 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim) {
 //	else printf("Full\r\n");
 }
 
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-	adc_values[adc_channel] = HAL_ADC_GetValue(hadc);
-	if (adc_channel) adc_channel = 0;
-	else adc_channel = 1;
+void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
 
+
+}
+
+// DMA has read first half of the buffer, begins to fill in the second half
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR will just call a FreeRTOS task
+
+	double voltage;
+
+	for (int i=0; i<NUM_CH; i++) { // Keep NUM_CH low for now
+		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
+
+		// Extract the whole number components
+		converted_voltage_vals[i].integer_part = (int)voltage;
+
+		// Isolate and scale the fractional component (3 decimal places)
+		converted_voltage_vals[i].fractional_part = (int)((voltage - converted_voltage_vals[i].integer_part) * 1000);
+
+	}
+
+	adc_conver_ready_buf1 = true;
+}
+
+// DMA has read second half of the buffer, begins to fill in the first half
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+
+	double voltage;
+
+	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) { // Keep NUM_CH low for now
+		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
+
+		// Extract the whole number components
+		converted_voltage_vals[i].integer_part = (int)voltage;
+
+		// Isolate and scale the fractional component (3 decimal places)
+		converted_voltage_vals[i].fractional_part = (int)((voltage - converted_voltage_vals[i].integer_part) * 1000);
+
+	}
+
+	adc_conver_ready_buf2 = true;
+
+}
+
+void start_interrupts(void) {
+//	  HAL_ADC_Start_IT(&hadc1);
+
+	 // Make sure to use lenght in CONVERSIONS, not frames
+	  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, N_FRAMES * NUM_CH);
+
+	  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+	  // Enable update interrupt and disable Capture/Compare interrupt (for now)
+	  TIM2->DIER |= TIM_DIER_UIE;
+	  TIM2->DIER &= ~TIM_DIER_CC1IE;
+
+
+	  enable_uart_rx_interrupt();
 }
 
 /* USER CODE END PFP */
@@ -249,9 +314,9 @@ int main(void)
   uint8_t uart_receiver_buffer[BUFFER_SIZE];
 
   start_DWT_cycle_counter();
-  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 
-  enable_uart_rx_interrupt();
+
+  start_interrupts();
 
 
   uint8_t char_array[] = {'H','E','L','L','O','\r','\n'};
@@ -265,27 +330,43 @@ int main(void)
 //	  HAL_Delay(500);
 //	  uart_write(&tx_buffer,char_array,7);
 
-//	  if (HAL_GetTick() - rough_timer > 2000) {
+	  if (HAL_GetTick() - rough_timer > 1000) {
 //		  uart_write(&tx_buffer, char_array, 7);
-//		  rough_timer = HAL_GetTick();
+		  rough_timer = HAL_GetTick();
 //	  }
 
-	  if (adc_channel) {
-		  __disable_irq();
-		  uint16_t adc_channel4_val = (uint16_t)adc_values[adc_channel];
-		  __enable_irq();
 
-		  double voltage = adc_channel4_val * (33/40960);
-		  printf("Channel 4 ADC Val: %.2f",voltage);
-	  }
-	  else {
-		  __disable_irq();
-		  uint16_t adc_channel1_val = (uint16_t)adc_values[adc_channel];
-		  __enable_irq();
+//		  if (cycle_flag) {
+//			  cycle_flag = 0;
+//			  printf("%lu\r\n", cycle_count);
+//		  }
 
-		  double voltage = adc_channel1_val * (33/40960);
-		  printf("Channel 1 ADC Val: %.2f",voltage);
+		  if (adc_conver_ready_buf1) { // Use better name like adc_half_compl
+
+			  	for (int i=0; i<NUM_CH; i++) {
+					// Print without requiring runtime float libraries
+					printf("Channel %u, ADC Val:%u, %d.%03d V\t", adc_group_sequence[i]
+																  , converted_voltage_vals[i].integer_part
+															      , converted_voltage_vals[i].fractional_part);
+
+			  	}
+			  	printf("\r\n");
+
+		  }
+		  if (adc_conver_ready_buf2) {
+
+			  	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) {
+					// Print without requiring runtime float libraries
+					printf("Channel %u, ADC Val:%u, %d.%03d V\t", adc_group_sequence[i]
+																  , converted_voltage_vals[i].integer_part
+															      , converted_voltage_vals[i].fractional_part);
+
+			  	}
+			  	printf("\r\n");
+
+		  }
 	  }
+
 
 	  if (RX_receive_ready) {
 		  // Set RX_receive_ready to false, use critical section
@@ -424,7 +505,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -491,7 +572,7 @@ static void MX_ADC1_Init(void)
   // Manually add channels here (not relying on CubeMX). Using 2 channels
   sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = 2;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -604,7 +685,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
@@ -620,9 +701,12 @@ static void MX_TIM2_Init(void)
   }
   /* USER CODE BEGIN TIM2_Init 2 */
 
-  // Enable the Trigger interrupt
+  // Set update request source to counter overflow to enable update interrupt
+  TIM2->CR1 |= TIM_CR1_URS;
 
-  TIM2->DIER |= TIM_DIER_TIE;
+  // Make sure UEV is enabled
+  TIM2->CR1 &= ~TIM_CR1_UDIS;
+
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
@@ -753,19 +837,24 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-#ifdef __GNUC__ // GNU compiler (gcc)
-#define PUTCHAR_PROTOTYPE int __io_putchar(int ch) //gcc expects this
-#else
-#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f) // other compilers expect this
-#endif
+//#ifdef __GNUC__ // GNU compiler (gcc)
+//#define PUTCHAR_PROTOTYPE int __io_putchar(int ch) //gcc expects this
+//#else
+//#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f) // other compilers expect this
+//#endif
+//
+//PUTCHAR_PROTOTYPE {
+//	HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+//	return ch;
+//}
 
-PUTCHAR_PROTOTYPE {
-	HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-	return ch;
+
+
+int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
 }
-
-
-
 
 
 
@@ -813,7 +902,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
-
+//  if (htim->Instance == TIM2) {
+//	  printf("Update TIM2 Working\r\n");
+//  }
   /* USER CODE END Callback 1 */
 }
 
