@@ -28,6 +28,7 @@
 
 #include "ring_buffer.h"
 #include "uart_driver.h"
+#include "i2c.h"
 
 /* USER CODE END Includes */
 
@@ -49,6 +50,8 @@ DMA_HandleTypeDef hdma2;
 #define NUM_CH   2
 #define N_FRAMES 2
 static volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
+
+uint8_t i2c_active_devices[I2C_NUM_VALID_ADDR];
 // layout: [A0, B0, A1, B1]  -> frame 0 = {A0,B0}, frame 1 = {A1,B1}
 /* USER CODE END PM */
 
@@ -72,6 +75,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+volatile uint32_t start;
 volatile uint32_t prev;
 volatile uint32_t cycle_count;
 volatile uint8_t cycle_flag = 0;
@@ -97,7 +101,7 @@ typedef struct {
 	int fractional_part;
 } Voltages_t;
 
-uint8_t adc_group_sequence[NUM_CH] = {1,4};
+unsigned int adc_group_sequence[NUM_CH] = {1,4};
 volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
 volatile bool adc_conver_ready_buf1 = false;
 volatile bool adc_conver_ready_buf2 = false;
@@ -160,6 +164,7 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
 
 // DMA has read first half of the buffer, begins to fill in the second half
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR will just call a FreeRTOS task
+//	start = DWT->CYCCNT;
 
 	double voltage;
 
@@ -175,10 +180,14 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR w
 	}
 
 	adc_conver_ready_buf1 = true;
+
+
 }
 
 // DMA has read second half of the buffer, begins to fill in the first half
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+//	cycle_count = DWT->CYCCNT - start; // wrap arounds are handled auto
+//	cycle_flag = 1;
 
 	double voltage;
 
@@ -320,8 +329,8 @@ int main(void)
 
 
   uint8_t char_array[] = {'H','E','L','L','O','\r','\n'};
-
   uint32_t rough_timer = HAL_GetTick();
+
 
   while (1)
   {
@@ -343,11 +352,14 @@ int main(void)
 
 		  if (adc_conver_ready_buf1) { // Use better name like adc_half_compl
 
+			  adc_conver_ready_buf1 = false;
+
+			  printf("HalfCplt - ");
 			  	for (int i=0; i<NUM_CH; i++) {
 					// Print without requiring runtime float libraries
-					printf("Channel %u, ADC Val:%u, %d.%03d V\t", adc_group_sequence[i]
-																  , converted_voltage_vals[i].integer_part
-															      , converted_voltage_vals[i].fractional_part);
+					printf("Ch:%u, %d.%03d V\t", adc_group_sequence[i]
+													, converted_voltage_vals[i].integer_part
+													, converted_voltage_vals[i].fractional_part);
 
 			  	}
 			  	printf("\r\n");
@@ -355,11 +367,14 @@ int main(void)
 		  }
 		  if (adc_conver_ready_buf2) {
 
+			  adc_conver_ready_buf2 = false;
+
+			  printf("FullCplt - ");
 			  	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) {
 					// Print without requiring runtime float libraries
-					printf("Channel %u, ADC Val:%u, %d.%03d V\t", adc_group_sequence[i]
-																  , converted_voltage_vals[i].integer_part
-															      , converted_voltage_vals[i].fractional_part);
+					printf("Ch:%u, %d.%03d V\t", adc_group_sequence[i-NUM_CH]
+													, converted_voltage_vals[i].integer_part
+													, converted_voltage_vals[i].fractional_part);
 
 			  	}
 			  	printf("\r\n");
@@ -377,7 +392,7 @@ int main(void)
 		  uint8_t rx_data;
 		  uart_read(&rx_buffer,&rx_data);
 
-		  printf("RECEIVED: %c\r\n",(char)rx_data);
+		  printf("\tRECEIVED: %c\r\n",(char)rx_data);
 
 		  //uint32_t data_sent = uart_write(&tx_buffer, char_array, 7);
 	  }
@@ -493,8 +508,8 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 2; // STMF446 doesn't have oversampling unit, need to do it manually
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.NbrOfConversion = NUM_CH; // STMF446 doesn't have oversampling unit, need to do it manually
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
