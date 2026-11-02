@@ -29,6 +29,7 @@
 #include "ring_buffer.h"
 #include "uart_driver.h"
 #include "i2c.h"
+#include "freertos_tasks.h"
 
 /* USER CODE END Includes */
 
@@ -68,12 +69,12 @@ UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart2;
 
 /* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
+//osThreadId_t defaultTaskHandle;
+//const osThreadAttr_t defaultTask_attributes = {
+//  .name = "defaultTask",
+//  .stack_size = 128 * 4,
+//  .priority = (osPriority_t) osPriorityNormal,
+//};
 /* USER CODE BEGIN PV */
 volatile uint32_t start;
 volatile uint32_t prev;
@@ -134,15 +135,34 @@ uint32_t get_cycle_count(void) {
 	return DWT->CYCCNT;
 }
 
-void toggle_LED(void) {
-	HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
+// FreeRTOS function
+void vToggle_GPIO(void* params) {
+	Pack_GPIO_Params_t* config = (Pack_GPIO_Params_t*)params;
+
+	for(;;) { // FreeRTOS starts from here next time
+		HAL_GPIO_TogglePin(config->GPIOx,config->GPIO_Pin);
+		vTaskDelay(pdMS_TO_TICKS(config->Delay));
+	}
+}
+
+// FreeRTOS function
+void vBusy_Wait(void* params) { // The function stack is created once only
+	uint32_t delay = *(uint32_t*)params;
+
+	uint32_t ms_to_cycles = delay * (SystemCoreClock / 1000); // this can overflow for > 23s
+
+	for(;;) {
+		uint32_t start = get_cycle_count();
+		while((get_cycle_count() - start) < ms_to_cycles);
+		vTaskDelay(pdMS_TO_TICKS(5000));
+	}
 }
 
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	uint32_t start = DWT->CYCCNT;
-
-	while((DWT->CYCCNT) < (start + 90000000)) {} // delay of 500ms
+//	uint32_t start = DWT->CYCCNT;
+//
+//	while((DWT->CYCCNT) < (start + 90000000)) {} // delay of 500ms
 
 }
 
@@ -209,7 +229,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 void start_interrupts(void) {
 //	  HAL_ADC_Start_IT(&hadc1);
 
-	 // Make sure to use lenght in CONVERSIONS, not frames
+	 // Make sure to use length in number of ADC CONVERSIONS, not frames
 	  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, N_FRAMES * NUM_CH);
 
 	  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
@@ -265,7 +285,22 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   setvbuf(stdout, NULL, _IONBF, 0);
+  start_DWT_cycle_counter();
 
+  rb_init(&ring_buffer, storage, BUFFER_SIZE);
+  rb_init(&tx_buffer, tx_storage, BUFFER_SIZE);
+  rb_init(&rx_buffer, rx_storage, BUFFER_SIZE);
+
+  uint8_t holder;
+  uint8_t uart_receiver_buffer[BUFFER_SIZE];
+
+
+
+//  start_interrupts();
+
+
+  uint8_t char_array[] = {'H','E','L','L','O','\r','\n'};
+  uint32_t rough_timer = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -294,13 +329,41 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-//  xTaskCreate(toggle_LED,
-//		  	  "toggle_led",
-//			  10,
-//			  NULL,
+
+//  static Pack_GPIO_Params_t PC2 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_2, .Delay = 500};
+//  static Pack_GPIO_Params_t PC3 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_3, .Delay = 1000};
+//  static uint32_t busy_task_delay = 6000;
+//
+//  xTaskCreate(vToggle_GPIO,
+//		  	  "toggle_pin_PC2_fast",
+//			  configMINIMAL_STACK_SIZE, // make the stack size much bigger (measured in words)
+//			  (void*)&PC2,
 //			  1,
 //			  NULL
 //		  	  );
+//
+//  xTaskCreate(vToggle_GPIO,
+//		  	  "toggle_pin_PC3_slow",
+//			  configMINIMAL_STACK_SIZE,
+//			  (void*)&PC3,
+//			  1,
+//			  NULL
+//		  	  );
+//
+////   The function vBusy_Wait had a bug in it
+//  xTaskCreate(vBusy_Wait, // in milliseconds
+//		  	  "task_hog",
+//			  configMINIMAL_STACK_SIZE,
+//			  (void*)&busy_task_delay,
+//			  2,
+//			  NULL
+//		  	  );
+
+//  xTaskCreate(vMainControl,
+//		  	  "main_control_task",
+//		      configMINIMAL_STACK_SIZE,
+//			  )
+
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -315,22 +378,12 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  rb_init(&ring_buffer, storage, BUFFER_SIZE);
-  rb_init(&tx_buffer, tx_storage, BUFFER_SIZE);
-  rb_init(&rx_buffer, rx_storage, BUFFER_SIZE);
 
-  uint8_t holder;
-  uint8_t uart_receiver_buffer[BUFFER_SIZE];
-
-  start_DWT_cycle_counter();
+  /* Start scheduler */
+  vTaskStartScheduler();
 
 
-  start_interrupts();
-
-
-  uint8_t char_array[] = {'H','E','L','L','O','\r','\n'};
-  uint32_t rough_timer = HAL_GetTick();
-
+  /* We should never get here as control is now taken by the scheduler */
 
   while (1)
   {
@@ -816,6 +869,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PC1 */
@@ -831,12 +887,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA5 */
+  /*Configure GPIO pin : PC3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA5 */ // For the green led
   GPIO_InitStruct.Pin = GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
