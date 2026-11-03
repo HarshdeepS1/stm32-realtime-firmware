@@ -22,9 +22,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #include "ring_buffer.h"
 #include "uart_driver.h"
@@ -41,16 +46,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+extern SemaphoreHandle_t xIDLESemphr;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 DMA_HandleTypeDef hdma2;
-
-#define NUM_CH   2
-#define N_FRAMES 2
-static volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
 
 uint8_t i2c_active_devices[I2C_NUM_VALID_ADDR];
 // layout: [A0, B0, A1, B1]  -> frame 0 = {A0,B0}, frame 1 = {A1,B1}
@@ -97,16 +98,6 @@ uint8_t storage[BUFFER_SIZE];
 uint8_t tx_storage[BUFFER_SIZE];
 uint8_t rx_storage[BUFFER_SIZE];
 
-typedef struct {
-	int integer_part;
-	int fractional_part;
-} Voltages_t;
-
-unsigned int adc_group_sequence[NUM_CH] = {1,4};
-volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
-volatile bool adc_conver_ready_buf1 = false;
-volatile bool adc_conver_ready_buf2 = false;
-
 
 /* USER CODE END PV */
 
@@ -135,46 +126,22 @@ uint32_t get_cycle_count(void) {
 	return DWT->CYCCNT;
 }
 
-// FreeRTOS function
-void vToggle_GPIO(void* params) {
-	Pack_GPIO_Params_t* config = (Pack_GPIO_Params_t*)params;
 
-	for(;;) { // FreeRTOS starts from here next time
-		HAL_GPIO_TogglePin(config->GPIOx,config->GPIO_Pin);
-		vTaskDelay(pdMS_TO_TICKS(config->Delay));
-	}
-}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { // will be used to go from IDLE to READY_TO_DRIVE
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-// FreeRTOS function
-void vBusy_Wait(void* params) { // The function stack is created once only
-	uint32_t delay = *(uint32_t*)params;
+    xSemaphoreGiveFromISR(xIDLESemphr, &xHigherPriorityTaskWoken);
 
-	uint32_t ms_to_cycles = delay * (SystemCoreClock / 1000); // this can overflow for > 23s
-
-	for(;;) {
-		uint32_t start = get_cycle_count();
-		while((get_cycle_count() - start) < ms_to_cycles);
-		vTaskDelay(pdMS_TO_TICKS(5000));
-	}
-}
-
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-//	uint32_t start = DWT->CYCCNT;
-//
-//	while((DWT->CYCCNT) < (start + 90000000)) {} // delay of 500ms
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
 }
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim) {
-//	uint32_t record = DWT->CYCCNT;
-//	cycle_count = record - prev; // wrap arounds are handled auto
-//	prev = record;
-//	cycle_flag = 1;
-//	HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
+	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-//	if(rb_push(&ring_buffer,num)) ++num;
-//	else printf("Full\r\n");
+	 start_system(&xHigherPriorityTaskWoken);
+
+	 portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
@@ -235,7 +202,7 @@ void start_interrupts(void) {
 	  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 	  // Enable update interrupt and disable Capture/Compare interrupt (for now)
 	  TIM2->DIER |= TIM_DIER_UIE;
-	  TIM2->DIER &= ~TIM_DIER_CC1IE;
+//	  TIM2->DIER &= ~TIM_DIER_CC1IE;
 
 
 	  enable_uart_rx_interrupt();
@@ -309,10 +276,12 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
+  xIDLESemph = xSemaphoreCreateBinary();
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -330,39 +299,6 @@ int main(void)
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 
-//  static Pack_GPIO_Params_t PC2 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_2, .Delay = 500};
-//  static Pack_GPIO_Params_t PC3 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_3, .Delay = 1000};
-//  static uint32_t busy_task_delay = 6000;
-//
-//  xTaskCreate(vToggle_GPIO,
-//		  	  "toggle_pin_PC2_fast",
-//			  configMINIMAL_STACK_SIZE, // make the stack size much bigger (measured in words)
-//			  (void*)&PC2,
-//			  1,
-//			  NULL
-//		  	  );
-//
-//  xTaskCreate(vToggle_GPIO,
-//		  	  "toggle_pin_PC3_slow",
-//			  configMINIMAL_STACK_SIZE,
-//			  (void*)&PC3,
-//			  1,
-//			  NULL
-//		  	  );
-//
-////   The function vBusy_Wait had a bug in it
-//  xTaskCreate(vBusy_Wait, // in milliseconds
-//		  	  "task_hog",
-//			  configMINIMAL_STACK_SIZE,
-//			  (void*)&busy_task_delay,
-//			  2,
-//			  NULL
-//		  	  );
-
-//  xTaskCreate(vMainControl,
-//		  	  "main_control_task",
-//		      configMINIMAL_STACK_SIZE,
-//			  )
 
   /* USER CODE END RTOS_THREADS */
 
@@ -982,7 +918,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   }
   /* USER CODE BEGIN Callback 1 */
 //  if (htim->Instance == TIM2) {
-//	  printf("Update TIM2 Working\r\n");
+//
 //  }
   /* USER CODE END Callback 1 */
 }
