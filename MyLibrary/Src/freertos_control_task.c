@@ -10,6 +10,7 @@
 
 #include "ring_buffer.h"
 #include <freertos_tasks.h>
+#include <stdbool.h>
 
 //#include <stdatomic.h>
 
@@ -17,17 +18,14 @@
 static FSM_States current_state = IDLE;
 
 // ADC+DMA Buffer
-volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
-unsigned int adc_group_sequence[NUM_CH] = {1,4};
-volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
-
-//volatile atomic_bool adc_conver_ready_buf1 = false;
-//volatile atomic_bool adc_conver_ready_buf2 = false;
+volatile uint16_t adc_buf[NUM_CH];
+volatile uint32_t seq;
+volatile frame_t current_frame;
 
 
 // Moving Avg Filter
 static Ring_Buffer_t moving_avg_filter;
-static uint8_t* moving_avg_buffer[MOV_AVG_BUFFER_SIZE];
+static uint32_t moving_avg_buffer[MOV_AVG_BUFFER_SIZE];
 
 // Fault Monitor and Flags
 static uint8_t implausibility_tick = 0;
@@ -35,15 +33,15 @@ static uint8_t implausibility_tick = 0;
 
 // Mutexes, Notifications, Semph
 TaskHandle_t xMain_ControllerHandle = NULL;
-extern SemaphoreHandle_t xCAN_TorqueSemphr; // Used to wake up CAN task to start sending CAN message
 SemaphoreHandle_t xIDLESemphr = NULL;
-SemaphoreHandle_t xADC_ConvSemphr1 = NULL;
-SemaphoreHandle_t xADC_ConvSemphr2 = NULL;
+QueueHandle_t frame_q = NULL;
+extern QueueHandle_t CAN_Torque_q; // Used to wake up CAN task to start sending CAN message
 
 
 
-static vMain_Controller (void) {
+static void vMain_Controller (void) {
 	uint32_t ulNotificationValue;
+
 
 	for (;;) {
 
@@ -82,12 +80,11 @@ static vMain_Controller (void) {
 				case DRIVE:
 					if (check_inputs() == FAILURE) {
 						current_state = STOP;
-						break;
 					}
 					else {
 						// Put into moving average filter, wake up CAN task every 10 samples
+						send_to_MC();
 					}
-
 					// If everything is done, yield to other tasks (start at the for loop from the very beginning)
 					break;
 
@@ -107,38 +104,60 @@ void start_task(BaseType_t *pxHigherPriorityTaskWoken) { // Will be used by TIM2
 	}
 }
 
+static bool send_to_MC(void) {
+	uint32_t filter_val = 0;
+
+	// Pick the smallest one (conservative one)
+	if (current_frame.a > current_frame.b) filter_val = current_frame.b;
+	else filter_val = current_frame.a;
+
+	// Push it into the moving average filter
+	if (rb_push(&moving_avg_filter, filter_val) == 0) return false;
+
+	// Every 10 samples wake up the CAN task to send the converted value
+	if (current_frame.seq_num == 10) {
+		//.............................
+		// Convert using DBC file (adc -> volts (or pedal %) -> torque)
+		//.............................
+
+
+	}
+
+}
+
 static FSM_Events check_inputs() { // Read ADC values, check for implausiblity
-	if (implausibility_tick > 100) return FAILURE;
 
-	// Convert ADC values to voltages
-	// If I don't get a value within 1ms, the ADC is not scanning
-	if (xSemaphoreTake(xADC_ConvSemphr1, pdMS_TO_TICKS(1)) == pdTRUE) {
+	// If I don't get a value within 2ms, the ADC is not scanning
+	if (xQueueReceive(frame_q, &current_frame, pdMS_TO_TICKS(2)) == pdTRUE) {
 
-		if (converted_voltage_vals[0].voltage > converted_voltage_vals[1].voltage) {
-			if ((converted_voltage_vals[0].voltage - converted_voltage_vals[1].voltage) > (0.1 * ADC_INPUT_VOLT)) {
-				implausibility_tick++;
-			}
+		// Check if missed frame
+		if (current_frame.seq_num != seq) return FAILURE;
 
+		// Implement short/open circuit check (values must be in between 0.5 - 3.0 V)
+		// Note the values are raw ADC values
+		if (!((620 < current_frame.a && current_frame.a < 3722) &&
+			  (620 < current_frame.b && current_frame.b < 3722)))
+		{
+			return FAILURE;
 		}
 
 
-		xSemaphoreGive(xADC_ConvSemphr1);
+		// Check for 10% implausibility (note absolute 10% is 0.33V, which corresponds to an ADC value of 409)
+
+		if (abs(current_frame.a - current_frame.b) > IMPLAUSIBILITY_THRESHOLD) {
+			implausibility_tick++;
+		}
+		else {
+			implausibility_tick = 0;
+		}
 
 	}
 	else return FAILURE;
 
-	// Wait for 2nd half of DMA buffer to be finished populating
-	// If i don't get values within 1ms, then ADC stopped halfway
-	if (xSemaphoreTake(xADC_ConvSemphr2, pdMS_TO_TICKS(1)) == pdTRUE) {
+	// Implausibility check
+	if (implausibility_tick > 100) return FAILURE;
 
-
-
-		xSemaphoreGive(xADC_ConvSemphr2);
-
-	}
-	else return FAILURE;
-
-	if
+	return OK;
 
 
 }

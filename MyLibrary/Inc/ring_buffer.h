@@ -15,7 +15,7 @@ typedef struct ring_buffer_tag {
 	volatile unsigned int head;
 	volatile unsigned int tail;
 	unsigned int size; //remember size has to be power of 2
-	uint8_t* buffer;
+	uint32_t* buffer;
 } Ring_Buffer_t;
 
 void     rb_init (Ring_Buffer_t *r, uint8_t *storage, uint32_t size);

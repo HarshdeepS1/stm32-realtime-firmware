@@ -47,9 +47,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 extern SemaphoreHandle_t xIDLESemphr;
-extern SemaphoreHandle_t xADC_ConvSemphr1;
-extern SemaphoreHandle_t xADC_ConvSemphr2;
-extern volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
+extern QueueHandle_t frame_q;
+extern TaskHandle_t xMain_ControllerHandle;
+
+extern volatile uint16_t adc_buf[NUM_CH];
+extern volatile uint32_t seq;
+extern volatile frame_t current_frame;
 
 //extern volatile atomic_bool adc_conver_ready_buf1;
 //extern volatile atomic_bool adc_conver_ready_buf2;
@@ -154,51 +157,19 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
 	return; // Do this later
 }
 
-// DMA has read first half of the buffer, begins to fill in the second half
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR will just call a FreeRTOS task
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-	double voltage = 0.0;
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
 
-	for (int i=0; i<NUM_CH; i++) { // Keep NUM_CH low for now
-		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
-
-		converted_voltage_vals[i].voltage = voltage;
-
-		// Extract the whole number components
-		converted_voltage_vals[i].integer_part = (int)voltage;
-
-		// Isolate and scale the fractional component (3 decimal places)
-		converted_voltage_vals[i].fractional_part = (int)((voltage - converted_voltage_vals[i].integer_part) * 1000);
-
-	}
-
-
-    xSemaphoreGiveFromISR(xADC_ConvSemphr1, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
+// I have disabled half conversion completes for now
 }
 
-// DMA has read second half of the buffer, begins to fill in the first half
+// Package raw ADC val into frame and send via a queue
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+
+    frame_t frame = {.a = adc_buf[0], .b = adc_buf[1], .seq_num = ++seq, .t_cycles = DWT->CYCCNT};
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-	double voltage;
-
-	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) { // Keep NUM_CH low for now
-		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
-
-		converted_voltage_vals[i].voltage = voltage;
-
-		// Extract the whole number components
-		converted_voltage_vals[i].integer_part = (int)voltage;
-
-		// Isolate and scale the fractional component (3 decimal places)
-		converted_voltage_vals[i].fractional_part = (int)((voltage - converted_voltage_vals[i].integer_part) * 1000);
-
-	}
-
-    xSemaphoreGiveFromISR(xADC_ConvSemphr2, &xHigherPriorityTaskWoken);
+    xQueueOverwriteFromISR(frame_q, &frame, &xHigherPriorityTaskWoken); // length-1 queue: keeps only the latest
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
 }
@@ -207,7 +178,7 @@ void start_interrupts(void) {
 //	  HAL_ADC_Start_IT(&hadc1);
 
 	 // Make sure to use length in number of ADC CONVERSIONS, not frames
-	  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, N_FRAMES * NUM_CH);
+	  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, NUM_CH);
 	  __HAL_DMA_DISABLE_IT(hadc1.DMA_Handle, DMA_IT_HT); // Disable half-conversion complete
 
 	  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
@@ -300,8 +271,7 @@ int main(void)
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   xIDLESemphr = xSemaphoreCreateBinary();
-  xADC_ConvSemphr1 = xSemaphoreCreateBinary();
-  xADC_ConvSemphr2 = xSemaphoreCreateBinary();
+
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -310,6 +280,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  frame_q = xQueueCreate(1, sizeof(frame_t));
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */

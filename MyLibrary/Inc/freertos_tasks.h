@@ -12,15 +12,17 @@
 #include <stdint.h>
 
 // For ADC+DMA Buffering
-#define NUM_CH   		2
-#define N_FRAMES 		2 // Should always be
-#define ADC_INPUT_VOLT  3.3
+#define NUM_CH   					2
+#define N_FRAMES 					2 // Should always be
+#define ADC_INPUT_VOLT  			3.3
+#define ADC_MAX_VALUE				4095
+#define IMPLAUSIBILITY_THRESHOLD	(unsigned int)(0.1 * (double)ADC_MAX_VALUE)
 
 typedef struct {
-	double voltage;
-	int integer_part;
-	int fractional_part;
-} Voltages_t;
+	uint32_t seq_num;
+	uint32_t t_cycles;
+	uint16_t a,b; // ADC channels a and b, they give raw ADC values
+} frame_t;
 
 
 

@@ -15,10 +15,10 @@ void     rb_init (Ring_Buffer_t *r, uint8_t *storage, uint32_t size) {
 	r->tail = 0;
 }
 
-bool     rb_push (Ring_Buffer_t *r, uint8_t byte) {   // false if full, increment head
+bool     rb_push (Ring_Buffer_t *r, uint32_t word) {   // false if full, increment head
 	if (r->head - r->tail == r->size) return 0; // need to read tail index
 
-	r->buffer[(r->head) & (r->size - 1)] = byte; // remember size has to be power of 2, same as doing modulo
+	r->buffer[(r->head) & (r->size - 1)] = word; // remember size has to be power of 2, same as doing modulo
 
 	++(r->head);
 
@@ -26,10 +26,10 @@ bool     rb_push (Ring_Buffer_t *r, uint8_t byte) {   // false if full, incremen
 }
 
 
-bool     rb_pop  (Ring_Buffer_t *r, uint8_t *byte){  // false if empty
+bool     rb_pop  (Ring_Buffer_t *r, uint32_t *word){  // false if empty
 	if (r->head == r->tail) return 0; // need to read head index
 
-	*byte = r->buffer[(r->tail) & (r->size - 1)];
+	*word = r->buffer[(r->tail) & (r->size - 1)];
 
 	++(r->tail);
 
