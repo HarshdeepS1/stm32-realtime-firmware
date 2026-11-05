@@ -11,17 +11,18 @@
 #include "ring_buffer.h"
 #include <freertos_tasks.h>
 
-#include <stdatomic.h>
+//#include <stdatomic.h>
 
 // 4 State FSM
 static FSM_States current_state = IDLE;
 
 // ADC+DMA Buffer
-extern volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
+volatile uint16_t adc_buf[N_FRAMES * NUM_CH];
 unsigned int adc_group_sequence[NUM_CH] = {1,4};
 volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
-volatile bool adc_conver_ready_buf1 = false;
-volatile bool adc_conver_ready_buf2 = false;
+
+//volatile atomic_bool adc_conver_ready_buf1 = false;
+//volatile atomic_bool adc_conver_ready_buf2 = false;
 
 
 // Moving Avg Filter
@@ -34,7 +35,11 @@ static uint8_t implausibility_tick = 0;
 
 // Mutexes, Notifications, Semph
 TaskHandle_t xMain_ControllerHandle = NULL;
+extern SemaphoreHandle_t xCAN_TorqueSemphr; // Used to wake up CAN task to start sending CAN message
 SemaphoreHandle_t xIDLESemphr = NULL;
+SemaphoreHandle_t xADC_ConvSemphr1 = NULL;
+SemaphoreHandle_t xADC_ConvSemphr2 = NULL;
+
 
 
 static vMain_Controller (void) {
@@ -70,7 +75,7 @@ static vMain_Controller (void) {
 					break;
 
 				case READY_TO_DRIVE:
-					// Check some signals, like BMS voltage level, etc.
+					// Check some signals, like BMS voltage level, implement later...
 					current_state = DRIVE;
 					break;
 
@@ -105,7 +110,35 @@ void start_task(BaseType_t *pxHigherPriorityTaskWoken) { // Will be used by TIM2
 static FSM_Events check_inputs() { // Read ADC values, check for implausiblity
 	if (implausibility_tick > 100) return FAILURE;
 
-	// Implement other safety checks ...
+	// Convert ADC values to voltages
+	// If I don't get a value within 1ms, the ADC is not scanning
+	if (xSemaphoreTake(xADC_ConvSemphr1, pdMS_TO_TICKS(1)) == pdTRUE) {
+
+		if (converted_voltage_vals[0].voltage > converted_voltage_vals[1].voltage) {
+			if ((converted_voltage_vals[0].voltage - converted_voltage_vals[1].voltage) > (0.1 * ADC_INPUT_VOLT)) {
+				implausibility_tick++;
+			}
+
+		}
+
+
+		xSemaphoreGive(xADC_ConvSemphr1);
+
+	}
+	else return FAILURE;
+
+	// Wait for 2nd half of DMA buffer to be finished populating
+	// If i don't get values within 1ms, then ADC stopped halfway
+	if (xSemaphoreTake(xADC_ConvSemphr2, pdMS_TO_TICKS(1)) == pdTRUE) {
+
+
+
+		xSemaphoreGive(xADC_ConvSemphr2);
+
+	}
+	else return FAILURE;
+
+	if
 
 
 }

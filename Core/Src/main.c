@@ -47,6 +47,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 extern SemaphoreHandle_t xIDLESemphr;
+extern SemaphoreHandle_t xADC_ConvSemphr1;
+extern SemaphoreHandle_t xADC_ConvSemphr2;
+extern volatile Voltages_t converted_voltage_vals[NUM_CH * N_FRAMES];
+
+//extern volatile atomic_bool adc_conver_ready_buf1;
+//extern volatile atomic_bool adc_conver_ready_buf2;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -139,24 +145,25 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { // will be used to go from IDLE
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim) {
 	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-	 start_system(&xHigherPriorityTaskWoken);
+	 start_system(&xHigherPriorityTaskWoken); // Don't need wrapper function, delete later
 
 	 portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
-
-
+	return; // Do this later
 }
 
 // DMA has read first half of the buffer, begins to fill in the second half
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR will just call a FreeRTOS task
-//	start = DWT->CYCCNT;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-	double voltage;
+	double voltage = 0.0;
 
 	for (int i=0; i<NUM_CH; i++) { // Keep NUM_CH low for now
 		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
+
+		converted_voltage_vals[i].voltage = voltage;
 
 		// Extract the whole number components
 		converted_voltage_vals[i].integer_part = (int)voltage;
@@ -166,21 +173,23 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) { // Later this ISR w
 
 	}
 
-	adc_conver_ready_buf1 = true;
 
+    xSemaphoreGiveFromISR(xADC_ConvSemphr1, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
 }
 
 // DMA has read second half of the buffer, begins to fill in the first half
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-//	cycle_count = DWT->CYCCNT - start; // wrap arounds are handled auto
-//	cycle_flag = 1;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
 	double voltage;
 
 	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) { // Keep NUM_CH low for now
 		voltage = adc_buf[i] * (3.3/4095.0); // Note I did 33/4095 but the compiler treats the two numbers as integers -> 0
 
+		converted_voltage_vals[i].voltage = voltage;
+
 		// Extract the whole number components
 		converted_voltage_vals[i].integer_part = (int)voltage;
 
@@ -189,7 +198,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 	}
 
-	adc_conver_ready_buf2 = true;
+    xSemaphoreGiveFromISR(xADC_ConvSemphr2, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
 }
 
@@ -198,6 +208,7 @@ void start_interrupts(void) {
 
 	 // Make sure to use length in number of ADC CONVERSIONS, not frames
 	  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, N_FRAMES * NUM_CH);
+	  __HAL_DMA_DISABLE_IT(hadc1.DMA_Handle, DMA_IT_HT); // Disable half-conversion complete
 
 	  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 	  // Enable update interrupt and disable Capture/Compare interrupt (for now)
@@ -206,6 +217,13 @@ void start_interrupts(void) {
 
 
 	  enable_uart_rx_interrupt();
+}
+
+void kernel_init(void) {
+
+//	atomic_init(&adc_conver_ready_buf1,false);
+//	atomic_init(&adc_conver_ready_buf2,false);
+
 }
 
 /* USER CODE END PFP */
@@ -281,7 +299,9 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
-  xIDLESemph = xSemaphoreCreateBinary();
+  xIDLESemphr = xSemaphoreCreateBinary();
+  xADC_ConvSemphr1 = xSemaphoreCreateBinary();
+  xADC_ConvSemphr2 = xSemaphoreCreateBinary();
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */

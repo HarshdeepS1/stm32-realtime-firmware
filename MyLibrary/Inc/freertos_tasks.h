@@ -12,12 +12,30 @@
 #include <stdint.h>
 
 // For ADC+DMA Buffering
-#define NUM_CH   2
-#define N_FRAMES 2
+#define NUM_CH   		2
+#define N_FRAMES 		2 // Should always be
+#define ADC_INPUT_VOLT  3.3
+
+typedef struct {
+	double voltage;
+	int integer_part;
+	int fractional_part;
+} Voltages_t;
+
+
+
+
+
+
 
 // Moving Average Filter
 #define MOV_AVG_BUFFER_SIZE 16 // has to be a power of 2
 #define MOV_AVG_FILTER_SIZE 10
+
+
+
+
+
 
 // For the blinky tasks (or if trying to pass GPIO info to tasks)
 typedef struct {
@@ -25,6 +43,13 @@ typedef struct {
 	uint32_t Delay;
 	uint16_t GPIO_Pin;
 } Pack_GPIO_Params_t;
+
+
+
+
+
+
+
 
 
 // State machine (4-state FSM)
@@ -40,12 +65,6 @@ typedef enum {
 	FAILURE,
 	OK,
 } FSM_Events;
-
-// For the ADC calculations
-typedef struct {
-	int integer_part;
-	int fractional_part;
-} Voltages_t;
 
 
 #endif /* INC_FREERTOS_BLINKY_TASK_H_ */
