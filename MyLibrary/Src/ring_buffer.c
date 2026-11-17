@@ -8,7 +8,7 @@
 #include "ring_buffer.h"
 
 // Producer -> head, consumer- > tail
-void     rb_init (Ring_Buffer_t *r, uint8_t *storage, uint32_t size) {
+void     rb_init (Ring_Buffer_t *r, uint32_t *storage, uint32_t size) {
 	r->size = size;
 	r->buffer = storage;
 	r->head = 0;
@@ -31,6 +31,9 @@ bool     rb_pop  (Ring_Buffer_t *r, uint32_t *word){  // false if empty
 
 	*word = r->buffer[(r->tail) & (r->size - 1)];
 
+//	Let's also zero out this space
+	r->buffer[(r->tail) & (r->size - 1)] = 0;
+
 	++(r->tail);
 
 	return 1;
@@ -39,4 +42,23 @@ bool     rb_pop  (Ring_Buffer_t *r, uint32_t *word){  // false if empty
 
 uint32_t rb_count(const Ring_Buffer_t *r) {
 	return r->head - r->tail; // naturally wraps around (finds absolute distance between the indices)
+}
+
+int rb_sum_elements(const Ring_Buffer_t *r) {
+	int sum = 0;
+	for (unsigned int i=0; i<(r->size); i++) {  // upgrade to size_t later
+		sum += r->buffer[i];
+	}
+
+	return sum;
+}
+
+void rb_reset_buffer(Ring_Buffer_t *r) {
+	r->head = 0;
+	r->tail = 0;
+
+	for (unsigned int i=0; i<(r->size); i++) {  // upgrade to size_t later
+		r->buffer[i] = 0;
+	}
+
 }

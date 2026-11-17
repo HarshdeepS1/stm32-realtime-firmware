@@ -35,6 +35,8 @@
 #include "uart_driver.h"
 #include "i2c.h"
 #include "freertos_tasks.h"
+//#include "CAN_inverter.h"
+//#include "freertos_control_task.h"
 
 /* USER CODE END Includes */
 
@@ -49,6 +51,8 @@
 extern SemaphoreHandle_t xIDLESemphr;
 extern QueueHandle_t frame_q;
 extern TaskHandle_t xMain_ControllerHandle;
+extern QueueHandle_t CAN_Command_q;
+extern QueueHandle_t CAN_Communciation_q;
 
 extern volatile uint16_t adc_buf[NUM_CH];
 extern volatile uint32_t seq;
@@ -146,11 +150,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { // will be used to go from IDLE
 }
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim) {
-	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-	 start_system(&xHigherPriorityTaskWoken); // Don't need wrapper function, delete later
+	if (xMain_ControllerHandle != NULL) {
+		vTaskNotifyGiveFromISR(xMain_ControllerHandle, &xHigherPriorityTaskWoken);
+	}
 
-	 portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
@@ -160,7 +166,7 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc) {
 
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
 
-// I have disabled half conversion completes for now
+// I have disabled half conversion completes
 }
 
 // Package raw ADC val into frame and send via a queue
@@ -243,9 +249,9 @@ int main(void)
   setvbuf(stdout, NULL, _IONBF, 0);
   start_DWT_cycle_counter();
 
-  rb_init(&ring_buffer, storage, BUFFER_SIZE);
-  rb_init(&tx_buffer, tx_storage, BUFFER_SIZE);
-  rb_init(&rx_buffer, rx_storage, BUFFER_SIZE);
+//  rb_init(&ring_buffer, storage, BUFFER_SIZE);
+//  rb_init(&tx_buffer, tx_storage, BUFFER_SIZE);
+//  rb_init(&rx_buffer, rx_storage, BUFFER_SIZE);
 
   uint8_t holder;
   uint8_t uart_receiver_buffer[BUFFER_SIZE];
@@ -281,6 +287,8 @@ int main(void)
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   frame_q = xQueueCreate(1, sizeof(frame_t));
+  CAN_Command_q = xQueueCreate(1, sizeof(float));
+  CAN_Communciation_q = xQueueCreate(1, sizeof(FSM_Events));
 
   /* USER CODE END RTOS_QUEUES */
 
@@ -323,7 +331,7 @@ int main(void)
 	  if (HAL_GetTick() - rough_timer > 1000) {
 //		  uart_write(&tx_buffer, char_array, 7);
 		  rough_timer = HAL_GetTick();
-//	  }
+	  }
 
 
 //		  if (cycle_flag) {
@@ -331,70 +339,41 @@ int main(void)
 //			  printf("%lu\r\n", cycle_count);
 //		  }
 
-		  if (adc_conver_ready_buf1) { // Use better name like adc_half_compl
-
-			  adc_conver_ready_buf1 = false;
-
-			  printf("HalfCplt - ");
-			  	for (int i=0; i<NUM_CH; i++) {
-					// Print without requiring runtime float libraries
-					printf("Ch:%u, %d.%03d V\t", adc_group_sequence[i]
-													, converted_voltage_vals[i].integer_part
-													, converted_voltage_vals[i].fractional_part);
-
-			  	}
-			  	printf("\r\n");
-
-		  }
-		  if (adc_conver_ready_buf2) {
-
-			  adc_conver_ready_buf2 = false;
-
-			  printf("FullCplt - ");
-			  	for (int i=((NUM_CH * N_FRAMES) / 2); i<(NUM_CH * N_FRAMES); i++) {
-					// Print without requiring runtime float libraries
-					printf("Ch:%u, %d.%03d V\t", adc_group_sequence[i-NUM_CH]
-													, converted_voltage_vals[i].integer_part
-													, converted_voltage_vals[i].fractional_part);
-
-			  	}
-			  	printf("\r\n");
-
-		  }
-	  }
 
 
-	  if (RX_receive_ready) {
-		  // Set RX_receive_ready to false, use critical section
-			__disable_irq();
-			RX_receive_ready = false;
-			__enable_irq();
+//	  if (RX_receive_ready) {
+//		  // Set RX_receive_ready to false, use critical section
+//			__disable_irq();
+//			RX_receive_ready = false;
+//			__enable_irq();
+//
+//		  uint8_t rx_data;
+//		  uart_read(&rx_buffer,&rx_data);
+//
+//		  printf("\tRECEIVED: %c\r\n",(char)rx_data);
+//
+//		  //uint32_t data_sent = uart_write(&tx_buffer, char_array, 7);
+//	  }
+//
+//	  if (RX_overrun_error) { // ORE
+//			__disable_irq();
+//			RX_overrun_error = false;
+//			__enable_irq();
+//
+//		  printf("OVERRUN ERROR HAS OCCURED\r\n");
+//		  // Could add more stuff here
+//	  }
+//
+//	  if (RX_buffer_overflow) {
+//			__disable_irq();
+//			RX_buffer_overflow = false;
+//			__enable_irq();
+//
+//		  printf("BUFFER OVERFLOW HAS OCCURED\r\n");
+//		  // Could add more stuff here
+//	  }
 
-		  uint8_t rx_data;
-		  uart_read(&rx_buffer,&rx_data);
 
-		  printf("\tRECEIVED: %c\r\n",(char)rx_data);
-
-		  //uint32_t data_sent = uart_write(&tx_buffer, char_array, 7);
-	  }
-
-	  if (RX_overrun_error) { // ORE
-			__disable_irq();
-			RX_overrun_error = false;
-			__enable_irq();
-
-		  printf("OVERRUN ERROR HAS OCCURED\r\n");
-		  // Could add more stuff here
-	  }
-
-	  if (RX_buffer_overflow) {
-			__disable_irq();
-			RX_buffer_overflow = false;
-			__enable_irq();
-
-		  printf("BUFFER OVERFLOW HAS OCCURED\r\n");
-		  // Could add more stuff here
-	  }
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

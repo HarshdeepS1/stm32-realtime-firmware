@@ -30,7 +30,7 @@ void uart_irq_handler(void) {
 //			// Checking to see data has been sent to shift register
 //			while (!(USART2->SR & USART_SR_TXE)) {}	// USART peripheral is volatile
 
-			rb_pop(&tx_buffer,(uint8_t*)&data);
+			rb_pop(&tx_buffer,(uint32_t*)&data);
 			USART2->DR = (data & USART_DR_DR); // Put into data register to be shifted out, MSB of DR sets parity
 
 		}
@@ -95,7 +95,7 @@ unsigned int uart_write(Ring_Buffer_t* txr, uint8_t* arr, uint32_t size) {
 	return data_sent;
 }
 
-void uart_read(Ring_Buffer_t* rxr, uint8_t* data) {
+void uart_read(Ring_Buffer_t* rxr, uint32_t* data) {
 	// Make sure to enable RX interrupt in the main code
 	rb_pop(rxr, data);
 }

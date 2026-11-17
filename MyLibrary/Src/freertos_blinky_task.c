@@ -14,6 +14,7 @@ static Pack_GPIO_Params_t PC2 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_2, .Delay 
 static Pack_GPIO_Params_t PC3 = {.GPIOx = GPIOC, .GPIO_Pin = GPIO_PIN_3, .Delay = 1000};
 static uint32_t busy_task_delay = 6000;
 
+extern uint32_t get_cycle_count(void);
 
 
 // FreeRTOS function

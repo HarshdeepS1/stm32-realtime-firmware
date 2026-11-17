@@ -31,7 +31,7 @@ typedef struct {
 
 
 // Moving Average Filter
-#define MOV_AVG_BUFFER_SIZE 16 // has to be a power of 2
+#define MOV_AVG_BUFFER_SIZE 16 // has to be a power of 2 (the actual buffer size)
 #define MOV_AVG_FILTER_SIZE 10
 
 
@@ -64,6 +64,7 @@ typedef enum {
 } FSM_States;
 
 typedef enum {
+	EMERGENCY,
 	FAILURE,
 	OK,
 } FSM_Events;
