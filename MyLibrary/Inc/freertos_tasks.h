@@ -15,8 +15,13 @@
 #define NUM_CH   					2
 #define N_FRAMES 					2 // Should always be
 #define ADC_INPUT_VOLT  			3.3
+#define ADC_VALID_RANGE_MIN			0.5
+#define ADC_VALID_RANGE_MAX			3.0
+
 #define ADC_MAX_VALUE				4095
 #define IMPLAUSIBILITY_THRESHOLD	(unsigned int)(0.1 * (double)ADC_MAX_VALUE)
+#define ADC_VALID_MIN				(unsigned int)((ADC_VALID_RANGE_MIN / ADC_INPUT_VOLT) * ADC_MAX_VALUE)
+#define ADC_VALID_MAX				(unsigned int)((ADC_VALID_RANGE_MAX / ADC_INPUT_VOLT) * ADC_MAX_VALUE)
 
 typedef struct {
 	uint32_t seq_num;

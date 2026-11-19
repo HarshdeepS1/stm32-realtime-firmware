@@ -84,8 +84,8 @@ static FSM_Events check_inputs() { // Read ADC values, check for implausiblity
 
 		// Implement short/open circuit check (values must be in between 0.5 - 3.0 V)
 		// Note the values are raw ADC values
-		if (!((620 < current_frame.a && current_frame.a < 3722) &&
-			  (620 < current_frame.b && current_frame.b < 3722)))
+		if (!((ADC_VALID_MIN < current_frame.a && current_frame.a < ADC_VALID_MAX) &&
+			  (ADC_VALID_MIN < current_frame.b && current_frame.b < ADC_VALID_MAX)))
 		{
 			return FAILURE;
 		}
@@ -114,7 +114,7 @@ static FSM_Events check_inputs() { // Read ADC values, check for implausiblity
 // Keep sending 0 torque commands until an ACK is received. Then reset system (clear moving_avg_buffer and
 // zero out implausibility_tick).
 static void stop_system() {
-	float zero_torque = 0.0;
+	float zero_torque = 0.0;  // Maybe send a message instead of a value?
 	FSM_Events state;
 
 	// If I don't get a response from the CAN task within 2 ms, resend the command.

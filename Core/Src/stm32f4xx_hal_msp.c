@@ -209,6 +209,7 @@ void HAL_CAN_MspInit(CAN_HandleTypeDef* hcan)
 
     /* USER CODE BEGIN CAN1_MspInit 1 */
 
+
     /* USER CODE END CAN1_MspInit 1 */
 
   }

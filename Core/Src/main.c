@@ -35,6 +35,7 @@
 #include "uart_driver.h"
 #include "i2c.h"
 #include "freertos_tasks.h"
+#include "CAN_inverter.h"
 //#include "CAN_inverter.h"
 //#include "freertos_control_task.h"
 
@@ -57,6 +58,9 @@ extern QueueHandle_t CAN_Communciation_q;
 extern volatile uint16_t adc_buf[NUM_CH];
 extern volatile uint32_t seq;
 extern volatile frame_t current_frame;
+
+// From the CAN file
+extern QueueHandle_t CAN_Mailbox_q;
 
 //extern volatile atomic_bool adc_conver_ready_buf1;
 //extern volatile atomic_bool adc_conver_ready_buf2;
@@ -180,6 +184,41 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 }
 
+// CAN Callbacks
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan) {
+//	UBaseType_t uxSavedInterruptStatus;
+//
+//	uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+//	{
+//		mailbox_empty_flag |= (uint8_t)CAN_TX_MAILBOX0;
+//	}
+//	taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+
+	uint32_t mailbox_num = CAN_TX_MAILBOX0;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(CAN_Mailbox_q, &mailbox_num, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+
+}
+
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan) {
+	uint32_t mailbox_num = CAN_TX_MAILBOX1;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(CAN_Mailbox_q, &mailbox_num, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+}
+
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan) {
+	uint32_t mailbox_num = CAN_TX_MAILBOX2;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(CAN_Mailbox_q, &mailbox_num, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
 void start_interrupts(void) {
 //	  HAL_ADC_Start_IT(&hadc1);
 
@@ -192,6 +231,14 @@ void start_interrupts(void) {
 	  TIM2->DIER |= TIM_DIER_UIE;
 //	  TIM2->DIER &= ~TIM_DIER_CC1IE;
 
+	  // Enable CAN interrupts (4 possible vectors)
+	  	  // Transmit Interrupts
+	  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_TX_MAILBOX_EMPTY);
+
+	  	  // Receive Interrupts
+	  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_RX_FIFO0_MSG_PENDING);
+	  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_RX_FIFO0_FULL);
+	  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_RX_FIFO0_OVERRUN);
 
 	  enable_uart_rx_interrupt();
 }
@@ -289,7 +336,7 @@ int main(void)
   frame_q = xQueueCreate(1, sizeof(frame_t));
   CAN_Command_q = xQueueCreate(1, sizeof(float));
   CAN_Communciation_q = xQueueCreate(1, sizeof(FSM_Events));
-
+  CAN_Mailbox_q = xQueueCreate(NUM_OF_MAILBOXES, sizeof(uint32_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -573,15 +620,20 @@ static void MX_CAN1_Init(void)
 
   /* USER CODE END CAN1_Init 0 */
 
+
+	// Will be using speed of 500 kMbps. 1M will require changing PCLK, but that
+	// will disturb all other peripherals.
+
+
   /* USER CODE BEGIN CAN1_Init 1 */
 
   /* USER CODE END CAN1_Init 1 */
   hcan1.Instance = CAN1;
-  hcan1.Init.Prescaler = 16;
+  hcan1.Init.Prescaler = 5;
   hcan1.Init.Mode = CAN_MODE_NORMAL;
   hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan1.Init.TimeSeg1 = CAN_BS1_1TQ;
-  hcan1.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_4TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_4TQ;
   hcan1.Init.TimeTriggeredMode = DISABLE;
   hcan1.Init.AutoBusOff = DISABLE;
   hcan1.Init.AutoWakeUp = DISABLE;
@@ -593,6 +645,21 @@ static void MX_CAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN CAN1_Init 2 */
+  HAL_NVIC_SetPriority(CAN1_TX_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(CAN1_SCE_IRQn, 5, 0);
+
+  HAL_NVIC_EnableIRQ(CAN1_TX_IRQn);
+  HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+  HAL_NVIC_EnableIRQ(CAN1_SCE_IRQn);
+
+  //----------------------------------
+  // Configure the reception filters
+  // .......
+  // .......
+  //----------------------------------
+
+
 
   /* USER CODE END CAN1_Init 2 */
 

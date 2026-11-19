@@ -63,6 +63,9 @@ extern TIM_HandleTypeDef htim6;
 /* USER CODE BEGIN EV */
 extern DMA_HandleTypeDef hdma2;
 extern ADC_HandleTypeDef hadc1;
+extern CAN_HandleTypeDef hcan1;
+
+
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -208,5 +211,9 @@ void ADC_IRQHandler(void) {
 
 void DMA2_Stream0_IRQHandler(void) {
 	HAL_DMA_IRQHandler(&hdma2);
+}
+
+void CAN1_TX_IRQHandler(void) {
+	HAL_CAN_IRQHandler(&hcan1);
 }
 /* USER CODE END 1 */
